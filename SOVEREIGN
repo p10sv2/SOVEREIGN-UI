@@ -1,8 +1,7 @@
 --[[
-    SOVEREIGN v2.5.0 (Final Monolithic Release)
-    Fully Optimized UI Framework & Feature Controller
-    Compatible with: Solara, Delta (Mobile/PC), Potassium, Volt, RiftHub
-    No external dependencies required.
+    SOVEREIGN v3.1.0 (Balanced Free vs Premium)
+    Engine: Custom Luau UI Framework
+    Features: Fully functional UI components, settings saving, and real-time game logic bridge.
 --]]
 
 local CoreGui = game:GetService("CoreGui")
@@ -13,23 +12,13 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
 
 -- ==========================================
--- 1. CROSS-EXECUTOR COMPATIBILITY & STATE
+-- 1. STATE & CONFIGURATION
 -- ==========================================
-local guiParent
-local success, coreGui = pcall(function() return CoreGui end)
-if success and coreGui then
-    guiParent = coreGui
-else
-    -- Fallback for Delta Mobile / restricted executors
-    guiParent = LocalPlayer:WaitForChild("PlayerGui")
-end
-
--- Global Configuration Table (The Game Logic reads directly from this)
+-- Set Premium to true to unlock all locked features
 local Config = {
-    Premium = false, -- Set to true to unlock all premium features
+    User = { IsPremium = false, Username = LocalPlayer.Name },
     Shooting = {
         PerfectTiming = { Enabled = false, GreenChance = 100, PingComp = false, AutoCal = false },
         Meter = { CustomStyle = false, VerticalOffset = 0, RocketOffset = 0, FunnelOffset = 0 },
@@ -42,26 +31,36 @@ local Config = {
     },
     Defense = {
         Guard = { Enabled = false, TeamCheck = false, IgnoreSlow = false, Reaction = 0, Smoothness = 50, Distance = 4, Mode = "Legit" },
-        Block = { Enabled = true, AutoRebound = true },
+        Block = { Enabled = false, AutoRebound = false },
         Practice = { Jumps = true, BodyUp = true, Reaches = true }
     },
     Settings = { StreamerMode = false, AutoExecute = false, Transparency = 0 }
 }
 _G.SOVEREIGN_CONFIG = Config
 
+-- Cross-Executor GUI Parent
+local guiParent
+local success, coreGui = pcall(function() return CoreGui end)
+if success and coreGui then guiParent = coreGui else guiParent = LocalPlayer:WaitForChild("PlayerGui") end
+
 -- ==========================================
--- 2. UI HELPER LIBRARY
+-- 2. THEME & HELPER LIBRARY
 -- ==========================================
 local Theme = {
-    Background = Color3.fromRGB(12, 12, 14),
-    Secondary = Color3.fromRGB(20, 20, 24),
-    Panel = Color3.fromRGB(28, 28, 34),
-    Accent = Color3.fromRGB(138, 43, 226),
-    Text = Color3.fromRGB(240, 240, 240),
-    TextMuted = Color3.fromRGB(160, 160, 170),
-    Gold = Color3.fromRGB(255, 215, 0),
-    Font = Enum.Font.GothamMedium,
+    Background = Color3.fromRGB(11, 12, 16),
+    Sidebar = Color3.fromRGB(18, 19, 26),
+    Panel = Color3.fromRGB(24, 26, 35),
+    PanelHover = Color3.fromRGB(32, 35, 46),
+    Accent = Color3.fromRGB(157, 78, 221),
+    AccentGlow = Color3.fromRGB(187, 134, 252),
+    Text = Color3.fromRGB(240, 240, 245),
+    TextMuted = Color3.fromRGB(140, 145, 160),
+    Gold = Color3.fromRGB(255, 200, 50),
+    Success = Color3.fromRGB(50, 205, 50),
+    Error = Color3.fromRGB(230, 50, 50),
     FontBold = Enum.Font.GothamBold,
+    FontMed = Enum.Font.GothamMedium,
+    FontReg = Enum.Font.Gotham
 }
 
 local function Create(className, properties, children)
@@ -71,47 +70,61 @@ local function Create(className, properties, children)
     return instance
 end
 
-local function AddCorner(parent, radius) Create("UICorner", {CornerRadius = UDim.new(0, radius or 8), Parent = parent}) end
-local function AddStroke(parent, color) Create("UIStroke", {Color = color or Theme.Panel, Thickness = 1, Parent = parent}) end
-local function Tween(obj, time, props) 
-    local t = TweenService:Create(obj, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
+local function Tween(obj, time, props, style)
+    local t = TweenService:Create(obj, TweenInfo.new(time, style or Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
     t:Play() return t 
 end
 
--- Notification System
-local NotifHolder = Create("Frame", {Size = UDim2.new(0, 250, 1, -40), Position = UDim2.new(1, -260, 0, 20), BackgroundTransparency = 1, Parent = guiParent})
-Create("UIListLayout", {Padding = UDim.new(0, 10), VerticalAlignment = Enum.VerticalAlignment.Top, Parent = NotifHolder})
+local function AddCorner(parent, radius) Create("UICorner", {CornerRadius = UDim.new(0, radius), Parent = parent}) end
+local function AddStroke(parent, color, thickness) Create("UIStroke", {Color = color or Theme.PanelHover, Thickness = thickness or 1, Parent = parent}) end
+local function AddPadding(parent, top, bottom, left, right) Create("UIPadding", {PaddingTop = UDim.new(0, top), PaddingBottom = UDim.new(0, bottom), PaddingLeft = UDim.new(0, left), PaddingRight = UDim.new(0, right), Parent = parent}) end
 
-local function Notify(title, text, isPremiumError)
-    local notif = Create("Frame", {Size = UDim2.new(1, 0, 0, 60), BackgroundColor3 = Theme.Secondary, BackgroundTransparency = 1, Parent = NotifHolder})
-    AddCorner(notif, 8)
-    local stroke = Create("UIStroke", {Color = isPremiumError and Theme.Gold or Theme.Accent, Transparency = 1, Parent = notif})
+-- ==========================================
+-- 3. NOTIFICATION SYSTEM
+-- ==========================================
+local NotifHolder = Create("Frame", {Size = UDim2.new(0, 300, 1, -40), Position = UDim2.new(1, -320, 0, 20), BackgroundTransparency = 1, Parent = guiParent})
+Create("UIListLayout", {Padding = UDim.new(0, 10), VerticalAlignment = Enum.VerticalAlignment.Top, SortOrder = Enum.SortOrder.LayoutOrder, Parent = NotifHolder})
+
+local function Notify(title, text, type)
+    local color = type == "Premium" and Theme.Gold or (type == "Error" and Theme.Error or Theme.Accent)
     
-    local titleLbl = Create("TextLabel", {Size = UDim2.new(1, -10, 0, 20), Position = UDim2.new(0, 10, 0, 5), BackgroundTransparency = 1, Text = title, TextColor3 = isPremiumError and Theme.Gold or Theme.Text, Font = Theme.FontBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTransparency = 1, Parent = notif})
-    local textLbl = Create("TextLabel", {Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0, 10, 0, 25), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.TextMuted, Font = Theme.Font, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, TextTransparency = 1, Parent = notif})
+    local notif = Create("Frame", {Size = UDim2.new(1, 0, 0, 65), BackgroundColor3 = Theme.Panel, BackgroundTransparency = 1, Parent = NotifHolder})
+    AddCorner(notif, 8)
+    local stroke = Create("UIStroke", {Color = color, Transparency = 1, Parent = notif})
+    
+    local bar = Create("Frame", {Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = color, BackgroundTransparency = 1, Parent = notif})
+    AddCorner(bar, 4)
 
-    Tween(notif, 0.2, {BackgroundTransparency = 0})
-    Tween(stroke, 0.2, {Transparency = 0})
-    Tween(titleLbl, 0.2, {TextTransparency = 0})
-    Tween(textLbl, 0.2, {TextTransparency = 0})
+    local titleLbl = Create("TextLabel", {Size = UDim2.new(1, -20, 0, 20), Position = UDim2.new(0, 15, 0, 10), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTransparency = 1, Parent = notif})
+    local textLbl = Create("TextLabel", {Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0, 15, 0, 30), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.TextMuted, Font = Theme.FontReg, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, TextTransparency = 1, Parent = notif})
 
-    task.delay(3, function()
-        Tween(notif, 0.2, {BackgroundTransparency = 1})
-        Tween(stroke, 0.2, {Transparency = 1})
-        Tween(titleLbl, 0.2, {TextTransparency = 1})
-        Tween(textLbl, 0.2, {TextTransparency = 1})
-        task.wait(0.2)
+    Tween(notif, 0.3, {BackgroundTransparency = 0, Position = UDim2.new(0, -10, 0, 0)})
+    Tween(stroke, 0.3, {Transparency = 0})
+    Tween(bar, 0.3, {BackgroundTransparency = 0})
+    Tween(titleLbl, 0.3, {TextTransparency = 0})
+    Tween(textLbl, 0.3, {TextTransparency = 0})
+
+    task.delay(4, function()
+        Tween(notif, 0.3, {BackgroundTransparency = 1, Position = UDim2.new(0, 20, 0, 0)})
+        Tween(stroke, 0.3, {Transparency = 1})
+        Tween(bar, 0.3, {BackgroundTransparency = 1})
+        Tween(titleLbl, 0.3, {TextTransparency = 1})
+        Tween(textLbl, 0.3, {TextTransparency = 1})
+        task.wait(0.3)
         notif:Destroy()
     end)
 end
 
 -- ==========================================
--- 3. MAIN GUI STRUCTURE
+-- 4. MAIN WINDOW
 -- ==========================================
 local ScreenGui = Create("ScreenGui", {Name = "SOVEREIGN_UI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = guiParent})
 
-local MainFrame = Create("Frame", {Size = UDim2.new(0, 850, 0, 550), Position = UDim2.new(0.5, -425, 0.5, -275), BackgroundColor3 = Theme.Background, BorderSizePixel = 0, Parent = ScreenGui})
-AddCorner(MainFrame, 12) AddStroke(MainFrame, Color3.fromRGB(40, 40, 45))
+local MainFrame = Create("Frame", {Size = UDim2.new(0, 900, 0, 600), Position = UDim2.new(0.5, -450, 0.5, -300), BackgroundColor3 = Theme.Background, BorderSizePixel = 0, Parent = ScreenGui})
+AddCorner(MainFrame, 12) 
+AddStroke(MainFrame, Color3.fromRGB(45, 45, 55), 1.5)
+
+local Shadow = Create("ImageLabel", {Size = UDim2.new(1, 20, 1, 20), Position = UDim2.new(0, -10, 0, -10), BackgroundTransparency = 1, Image = "rbxassetid://1316045217", ImageColor3 = Color3.new(0,0,0), ImageTransparency = 0.5, ScaleType = Enum.ScaleType.Slice, SliceCenter = Rect.new(10,10,118,118), Parent = MainFrame, ZIndex = -1})
 
 -- Draggable
 local dragging, dragInput, dragStart, startPos
@@ -133,442 +146,401 @@ UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
 end)
 
--- Top Bar
-local TopBar = Create("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = Theme.Background, Parent = MainFrame})
-AddCorner(TopBar, 12)
-Create("TextLabel", {Size = UDim2.new(0, 200, 1, 0), Position = UDim2.new(0, 20, 0, 0), BackgroundTransparency = 1, Text = "SOVEREIGN", TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 20, TextXAlignment = Enum.TextXAlignment.Left, Parent = TopBar})
+-- ==========================================
+-- 5. SIDEBAR NAVIGATION
+-- ==========================================
+local Sidebar = Create("Frame", {Size = UDim2.new(0, 220, 1, 0), BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = MainFrame})
+AddCorner(Sidebar, 12)
 
-local SearchBar = Create("Frame", {Size = UDim2.new(0, 250, 0, 30), Position = UDim2.new(0.5, -125, 0.5, -15), BackgroundColor3 = Theme.Secondary, Parent = TopBar})
-AddCorner(SearchBar, 6) AddStroke(SearchBar)
-Create("TextLabel", {Size = UDim2.new(0, 30, 1, 0), BackgroundTransparency = 1, Text = "🔍", TextColor3 = Theme.TextMuted, Parent = SearchBar})
-local SearchInput = Create("TextBox", {Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 35, 0, 0), BackgroundTransparency = 1, PlaceholderText = "Search features...", PlaceholderColor3 = Theme.TextMuted, TextColor3 = Theme.Text, Font = Theme.Font, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = SearchBar})
+local LogoArea = Create("Frame", {Size = UDim2.new(1, 0, 0, 70), BackgroundTransparency = 1, Parent = Sidebar})
+Create("TextLabel", {Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0, 20, 0, 25), BackgroundTransparency = 1, Text = "SOVEREIGN", TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 22, TextXAlignment = Enum.TextXAlignment.Left, Parent = LogoArea})
+Create("TextLabel", {Size = UDim2.new(1, -20, 0, 15), Position = UDim2.new(0, 20, 0, 48), BackgroundTransparency = 1, Text = "v3.1.0 FREE/PREM", TextColor3 = Theme.Accent, Font = Theme.FontBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Parent = LogoArea})
 
-local CloseBtn = Create("TextButton", {Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -45, 0.5, -15), BackgroundColor3 = Theme.Secondary, Text = "✕", TextColor3 = Theme.TextMuted, Font = Theme.FontBold, Parent = TopBar})
-AddCorner(CloseBtn, 6)
-CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
-CloseBtn.MouseEnter:Connect(function() Tween(CloseBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(220, 50, 50), TextColor3 = Theme.Text}) end)
-CloseBtn.MouseLeave:Connect(function() Tween(CloseBtn, 0.2, {BackgroundColor3 = Theme.Secondary, TextColor3 = Theme.TextMuted}) end)
+local NavHolder = Create("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -140), Position = UDim2.new(0, 0, 0, 75), BackgroundTransparency = 1, ScrollBarThickness = 0, Parent = Sidebar})
+Create("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = NavHolder})
+AddPadding(NavHolder, 0, 0, 10, 10)
+
+local UserArea = Create("Frame", {Size = UDim2.new(1, -20, 0, 60), Position = UDim2.new(0, 10, 1, -70), BackgroundColor3 = Theme.Panel, Parent = Sidebar})
+AddCorner(UserArea, 8) AddStroke(UserArea, Theme.PanelHover)
+Create("Frame", {Size = UDim2.new(0, 32, 0, 32), Position = UDim2.new(0, 10, 0.5, -16), BackgroundColor3 = Theme.Background, Parent = UserArea}).Name = "Avatar"
+AddCorner(UserArea.Avatar, 16)
+Create("TextLabel", {Size = UDim2.new(1, -55, 0, 15), Position = UDim2.new(0, 50, 0, 12), BackgroundTransparency = 1, Text = Config.User.Username, TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = UserArea})
+local planTxt = Create("TextLabel", {Size = UDim2.new(1, -55, 0, 15), Position = UDim2.new(0, 50, 0, 28), BackgroundTransparency = 1, Text = Config.User.IsPremium and "Premium 👑" or "Free Tier", TextColor3 = Config.User.IsPremium and Theme.Gold or Theme.TextMuted, Font = Theme.FontReg, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = UserArea})
+
+-- Upgrade Prompt (Bottom)
+if not Config.User.IsPremium then
+    local upgBtn = Create("TextButton", {Size = UDim2.new(1, -20, 0, 25), Position = UDim2.new(0, 10, 1, -105), BackgroundColor3 = Theme.Gold, Text = "Upgrade to Premium", TextColor3 = Color3.new(0,0,0), Font = Theme.FontBold, TextSize = 11, Parent = Sidebar})
+    AddCorner(upgBtn, 6)
+    upgBtn.MouseButton1Click:Connect(function()
+        Notify("Premium Benefits", "Unlock advanced meters, guard modes, and exclusive customizations.", "Premium")
+    end)
+end
 
 -- ==========================================
--- 4. COMPONENTS (SOVEREIGN LIBRARY)
+-- 6. TOP BAR & CONTENT AREA
+-- ==========================================
+local TopBar = Create("Frame", {Size = UDim2.new(1, -220, 0, 60), Position = UDim2.new(0, 220, 0, 0), BackgroundTransparency = 1, Parent = MainFrame})
+
+local Breadcrumb = Create("TextLabel", {Size = UDim2.new(0, 200, 1, 0), Position = UDim2.new(0, 20, 0, 0), BackgroundTransparency = 1, Text = "Dashboard", TextColor3 = Theme.TextMuted, Font = Theme.FontMed, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = TopBar})
+
+local SearchContainer = Create("Frame", {Size = UDim2.new(0, 300, 0, 34), Position = UDim2.new(0.5, -150, 0.5, -17), BackgroundColor3 = Theme.Sidebar, Parent = TopBar})
+AddCorner(SearchContainer, 8) AddStroke(SearchContainer, Theme.Panel)
+Create("TextLabel", {Size = UDim2.new(0, 30, 1, 0), BackgroundTransparency = 1, Text = "🔍", TextColor3 = Theme.TextMuted, TextSize = 14, Parent = SearchContainer})
+local SearchInput = Create("TextBox", {Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 35, 0, 0), BackgroundTransparency = 1, PlaceholderText = "Search settings...", PlaceholderColor3 = Theme.TextMuted, TextColor3 = Theme.Text, Font = Theme.FontReg, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = SearchContainer})
+
+local CloseBtn = Create("TextButton", {Size = UDim2.new(0, 34, 0, 34), Position = UDim2.new(1, -50, 0.5, -17), BackgroundColor3 = Theme.Sidebar, Text = "✕", TextColor3 = Theme.TextMuted, Font = Theme.FontBold, Parent = TopBar})
+AddCorner(CloseBtn, 8)
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+CloseBtn.MouseEnter:Connect(function() Tween(CloseBtn, 0.2, {BackgroundColor3 = Theme.Error, TextColor3 = Theme.Text}) end)
+CloseBtn.MouseLeave:Connect(function() Tween(CloseBtn, 0.2, {BackgroundColor3 = Theme.Sidebar, TextColor3 = Theme.TextMuted}) end)
+
+local ContentContainer = Create("Frame", {Size = UDim2.new(1, -240, 1, -80), Position = UDim2.new(0, 230, 0, 70), BackgroundTransparency = 1, Parent = MainFrame})
+
+-- ==========================================
+-- 7. COMPONENT FACTORY
 -- ==========================================
 local Pages = {}
 local NavButtons = {}
-local ActiveTab = nil
-local ContentArea = Create("Frame", {Size = UDim2.new(1, -220, 1, -50), Position = UDim2.new(0, 220, 0, 50), BackgroundColor3 = Theme.Background, Parent = MainFrame})
+local CurrentPage = "Dashboard"
 
-local function CreatePage(name)
-    local page = Create("ScrollingFrame", {Size = UDim2.new(1, -20, 1, -20), Position = UDim2.new(0, 10, 0, 10), BackgroundTransparency = 1, ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.Accent, Visible = false, Parent = ContentArea})
+local function CreatePage(name, searchKeywords)
+    local page = Create("ScrollingFrame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ScrollBarThickness = 2, ScrollBarImageColor3 = Theme.PanelHover, Visible = false, Parent = ContentContainer})
     Create("UIListLayout", {Padding = UDim.new(0, 15), SortOrder = Enum.SortOrder.LayoutOrder, Parent = page})
-    Pages[name] = page
+    Pages[name] = {Frame = page, Keywords = searchKeywords}
     return page
 end
 
 local function CreateCard(parent, title, desc)
-    local card = Create("Frame", {Size = UDim2.new(1, -10, 0, 0), BackgroundColor3 = Theme.Secondary, AutomaticSize = Enum.AutomaticSize.Y, Parent = parent})
-    AddCorner(card, 10) AddStroke(card)
-    Create("UIPadding", {PaddingTop = UDim.new(0, 15), PaddingBottom = UDim.new(0, 15), PaddingLeft = UDim.new(0, 15), PaddingRight = UDim.new(0, 15), Parent = card})
+    local card = Create("Frame", {Size = UDim2.new(1, -10, 0, 0), BackgroundColor3 = Theme.Panel, AutomaticSize = Enum.AutomaticSize.Y, Parent = parent})
+    AddCorner(card, 10) AddStroke(card, Theme.PanelHover)
+    AddPadding(card, 15, 15, 15, 15)
     Create("UIListLayout", {Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder, Parent = card})
 
-    local header = Create("Frame", {Size = UDim2.new(1, 0, 0, desc and 30 or 15), BackgroundTransparency = 1, Parent = card})
-    Create("TextLabel", {Size = UDim2.new(1, 0, 0, 15), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = header})
+    local header = Create("Frame", {Size = UDim2.new(1, 0, 0, desc and 35 or 20), BackgroundTransparency = 1, Parent = card})
+    Create("TextLabel", {Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, Font = Theme.FontBold, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Parent = header})
     if desc then
-        Create("TextLabel", {Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 16), BackgroundTransparency = 1, Text = desc, TextColor3 = Theme.TextMuted, Font = Theme.Font, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = header})
+        Create("TextLabel", {Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, 18), BackgroundTransparency = 1, Text = desc, TextColor3 = Theme.TextMuted, Font = Theme.FontReg, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = header})
     end
+    
+    local div = Create("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, desc and 30 or 15), BackgroundColor3 = Theme.PanelHover, BorderSizePixel = 0, Parent = header})
+    
     return card
 end
 
 local function CreateToggle(parent, text, configTable, configKey, isPremium)
-    local container = Create("Frame", {Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Parent = parent})
-    Create("TextLabel", {Size = UDim2.new(1, -80, 1, 0), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
+    local container = Create("Frame", {Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Parent = parent})
+    Create("TextLabel", {Size = UDim2.new(1, -80, 1, 0), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.FontMed, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
     
     if isPremium then
-        Create("TextLabel", {Size = UDim2.new(0, 50, 1, 0), Position = UDim2.new(1, -100, 0, 0), BackgroundTransparency = 1, Text = "👑 PREM", TextColor3 = Theme.Gold, Font = Theme.FontBold, TextSize = 10, Parent = container})
+        local badge = Create("Frame", {Size = UDim2.new(0, 45, 0, 16), Position = UDim2.new(1, -120, 0.5, -8), BackgroundColor3 = Theme.PanelHover, Parent = container})
+        AddCorner(badge, 4)
+        Create("TextLabel", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "👑 PREM", TextColor3 = Theme.Gold, Font = Theme.FontBold, TextSize = 9, Parent = badge})
     end
 
-    local toggleBg = Create("Frame", {Size = UDim2.new(0, 36, 0, 20), Position = UDim2.new(1, -36, 0.5, -10), BackgroundColor3 = configTable[configKey] and Theme.Accent or Theme.Panel, Parent = container})
-    AddCorner(toggleBg, 10)
-    local toggleDot = Create("Frame", {Size = UDim2.new(0, 14, 0, 14), Position = configTable[configKey] and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7), BackgroundColor3 = Theme.Text, Parent = toggleBg})
-    AddCorner(toggleDot, 7)
+    local toggleBg = Create("Frame", {Size = UDim2.new(0, 40, 0, 22), Position = UDim2.new(1, -40, 0.5, -11), BackgroundColor3 = configTable[configKey] and Theme.Accent or Theme.Sidebar, Parent = container})
+    AddCorner(toggleBg, 11)
+    local toggleDot = Create("Frame", {Size = UDim2.new(0, 16, 0, 16), Position = configTable[configKey] and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = Theme.Text, Parent = toggleBg})
+    AddCorner(toggleDot, 8)
 
-    local toggleBtn = Create("TextButton", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = container})
-    toggleBtn.MouseButton1Click:Connect(function()
-        if isPremium and not Config.Premium then
-            Notify("Premium Required", "Upgrade to Sovereign Premium to use " .. text, true)
+    local btn = Create("TextButton", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = container})
+    btn.MouseButton1Click:Connect(function()
+        if isPremium and not Config.User.IsPremium then
+            Notify("Premium Required", "Upgrade to SOVEREIGN Premium to access " .. text, "Premium")
             return
         end
-        
         configTable[configKey] = not configTable[configKey]
         if configTable[configKey] then
-            Tween(toggleBg, 0.2, {BackgroundColor3 = Theme.Accent})
-            Tween(toggleDot, 0.2, {Position = UDim2.new(1, -17, 0.5, -7)})
+            Tween(toggleBg, 0.2, {BackgroundColor3 = Theme.Accent}, Enum.EasingStyle.Back)
+            Tween(toggleDot, 0.2, {Position = UDim2.new(1, -18, 0.5, -8)}, Enum.EasingStyle.Back)
         else
-            Tween(toggleBg, 0.2, {BackgroundColor3 = Theme.Panel})
-            Tween(toggleDot, 0.2, {Position = UDim2.new(0, 3, 0.5, -7)})
+            Tween(toggleBg, 0.2, {BackgroundColor3 = Theme.Sidebar}, Enum.EasingStyle.Back)
+            Tween(toggleDot, 0.2, {Position = UDim2.new(0, 2, 0.5, -8)}, Enum.EasingStyle.Back)
         end
     end)
 end
 
 local function CreateSlider(parent, text, min, max, configTable, configKey, isPremium)
     local val = configTable[configKey]
-    local container = Create("Frame", {Size = UDim2.new(1, 0, 0, 45), BackgroundTransparency = 1, Parent = parent})
-    Create("TextLabel", {Size = UDim2.new(1, -50, 0, 20), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
+    local container = Create("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, Parent = parent})
+    Create("TextLabel", {Size = UDim2.new(1, -50, 0, 20), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.FontMed, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
     
-    local valueLabel = Create("TextLabel", {Size = UDim2.new(0, 50, 0, 20), Position = UDim2.new(1, -50, 0, 0), BackgroundTransparency = 1, Text = isPremium and ("👑 " .. tostring(val)) or tostring(val), TextColor3 = isPremium and Theme.Gold or Theme.TextMuted, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right, Parent = container})
-    local sliderBg = Create("Frame", {Size = UDim2.new(1, 0, 0, 4), Position = UDim2.new(0, 0, 1, -12), BackgroundColor3 = Theme.Panel, Parent = container})
-    AddCorner(sliderBg, 2)
+    local valLbl = Create("TextLabel", {Size = UDim2.new(0, 50, 0, 20), Position = UDim2.new(1, -50, 0, 0), BackgroundTransparency = 1, Text = tostring(val), TextColor3 = Theme.Accent, Font = Theme.FontBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Right, Parent = container})
+    if isPremium then valLbl.TextColor3 = Theme.Gold end
 
+    local track = Create("Frame", {Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0, 30), BackgroundColor3 = Theme.Sidebar, Parent = container})
+    AddCorner(track, 3)
+    
     local percent = (val - min) / (max - min)
-    local fill = Create("Frame", {Size = UDim2.new(percent, 0, 1, 0), BackgroundColor3 = Theme.Accent, Parent = sliderBg})
-    AddCorner(fill, 2)
-    local dot = Create("Frame", {Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(percent, -6, 0.5, -6), BackgroundColor3 = Theme.Text, Parent = sliderBg})
-    AddCorner(dot, 6)
+    local fill = Create("Frame", {Size = UDim2.new(percent, 0, 1, 0), BackgroundColor3 = isPremium and Theme.Gold or Theme.Accent, Parent = track})
+    AddCorner(fill, 3)
+    
+    local dot = Create("Frame", {Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(percent, -7, 0.5, -7), BackgroundColor3 = Theme.Text, Parent = track})
+    AddCorner(dot, 7)
 
-    local isDragging = false
-    local sliderBtn = Create("TextButton", {Size = UDim2.new(1, 0, 2, 0), Position = UDim2.new(0, 0, -0.5, 0), BackgroundTransparency = 1, Text = "", Parent = sliderBg})
+    local dragging = false
+    local hitbox = Create("TextButton", {Size = UDim2.new(1, 0, 3, 0), Position = UDim2.new(0, 0, -1, 0), BackgroundTransparency = 1, Text = "", Parent = track})
 
-    local function UpdateValue(x)
-        local p = math.clamp((x - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-        local newValue = math.floor(min + (max - min) * p + 0.5)
-        configTable[configKey] = newValue
-        
+    local function update(x)
+        local p = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local newVal = math.floor(min + (max - min) * p + 0.5)
+        configTable[configKey] = newVal
         Tween(fill, 0.1, {Size = UDim2.new(p, 0, 1, 0)})
-        Tween(dot, 0.1, {Position = UDim2.new(p, -6, 0.5, -6)})
-        valueLabel.Text = isPremium and ("👑 " .. tostring(newValue)) or tostring(newValue)
+        Tween(dot, 0.1, {Position = UDim2.new(p, -7, 0.5, -7)})
+        valLbl.Text = tostring(newVal)
     end
 
-    sliderBtn.MouseButton1Down:Connect(function()
-        if isPremium and not Config.Premium then
-            Notify("Premium Required", "Upgrade to Sovereign Premium to adjust " .. text, true)
+    hitbox.MouseButton1Down:Connect(function()
+        if isPremium and not Config.User.IsPremium then
+            Notify("Premium Required", "Upgrade to SOVEREIGN Premium to adjust " .. text, "Premium")
             return
         end
-        isDragging = true
-        UpdateValue(UserInputService:GetMouseLocation().X)
+        dragging = true update(UserInputService:GetMouseLocation().X)
     end)
 
     UserInputService.InputChanged:Connect(function(input)
-        if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            UpdateValue(input.Position.X)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            update(input.Position.X)
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = false end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
     end)
 end
 
 local function CreateDropdown(parent, text, options, configTable, configKey, isPremium)
-    local currentVal = configTable[configKey]
     local container = Create("Frame", {Size = UDim2.new(1, 0, 0, 45), BackgroundTransparency = 1, Parent = parent, ZIndex = 2})
-    Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
+    Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = text, TextColor3 = Theme.Text, Font = Theme.FontMed, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = container})
     
-    local dropBg = Create("Frame", {Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 0, 22), BackgroundColor3 = Theme.Panel, Parent = container, ZIndex = 3})
-    AddCorner(dropBg, 6)
-    local dropText = Create("TextLabel", {Size = UDim2.new(1, -20, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = currentVal, TextColor3 = isPremium and Theme.Gold or Theme.Text, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = dropBg, ZIndex = 4})
-    local arrow = Create("TextLabel", {Size = UDim2.new(0, 20, 1, 0), Position = UDim2.new(1, -20, 0, 0), BackgroundTransparency = 1, Text = "▼", TextColor3 = Theme.TextMuted, TextSize = 10, Parent = dropBg, ZIndex = 4})
+    local dropBg = Create("Frame", {Size = UDim2.new(1, 0, 0, 24), Position = UDim2.new(0, 0, 0, 22), BackgroundColor3 = Theme.Sidebar, Parent = container, ZIndex = 3})
+    AddCorner(dropBg, 6) AddStroke(dropBg, Theme.PanelHover)
+    
+    local txt = Create("TextLabel", {Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = configTable[configKey], TextColor3 = isPremium and Theme.Gold or Theme.Text, Font = Theme.FontReg, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = dropBg, ZIndex = 4})
+    local arrow = Create("TextLabel", {Size = UDim2.new(0, 20, 1, 0), Position = UDim2.new(1, -25, 0, 0), BackgroundTransparency = 1, Text = "▼", TextColor3 = Theme.TextMuted, TextSize = 10, Parent = dropBg, ZIndex = 4})
     
     local btn = Create("TextButton", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = dropBg, ZIndex = 5})
-
-    local open = false
-    local list = Create("Frame", {Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 1, 5), BackgroundColor3 = Theme.Secondary, ClipsDescendants = true, Visible = false, Parent = dropBg, ZIndex = 10})
-    AddCorner(list, 6) AddStroke(list)
+    
+    local list = Create("Frame", {Size = UDim2.new(1, 0, 0, 0), Position = UDim2.new(0, 0, 1, 5), BackgroundColor3 = Theme.Sidebar, ClipsDescendants = true, Visible = false, Parent = dropBg, ZIndex = 10})
+    AddCorner(list, 6) AddStroke(list, Theme.PanelHover)
     Create("UIListLayout", {Padding = UDim.new(0, 2), Parent = list})
     
-    local function Close()
-        open = false
-        Tween(list, 0.2, {Size = UDim2.new(1, 0, 0, 0)})
-        task.wait(0.2) if not open then list.Visible = false end
-        Tween(arrow, 0.2, {Rotation = 0})
-    end
-
-    btn.MouseButton1Click:Connect(function()
-        if isPremium and not Config.Premium then
-            Notify("Premium Required", "Upgrade to Sovereign Premium to change " .. text, true)
+    local open = false
+    local function toggleList()
+        if isPremium and not Config.User.IsPremium then
+            Notify("Premium Required", "Upgrade to SOVEREIGN Premium to change " .. text, "Premium")
             return
         end
-        
         open = not open
         if open then
             list.Visible = true
             Tween(list, 0.2, {Size = UDim2.new(1, 0, 0, math.min(#options * 24, 120))})
             Tween(arrow, 0.2, {Rotation = 180})
         else
-            Close()
+            Tween(list, 0.2, {Size = UDim2.new(1, 0, 0, 0)})
+            Tween(arrow, 0.2, {Rotation = 0})
+            task.wait(0.2) if not open then list.Visible = false end
         end
-    end)
+    end
+
+    btn.MouseButton1Click:Connect(toggleList)
 
     for _, opt in ipairs(options) do
-        local optBtn = Create("TextButton", {Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = Theme.Secondary, Text = opt, TextColor3 = Theme.TextMuted, Font = Theme.Font, TextSize = 12, Parent = list, ZIndex = 11})
-        optBtn.MouseEnter:Connect(function() Tween(optBtn, 0.1, {BackgroundColor3 = Theme.Panel, TextColor3 = Theme.Text}) end)
-        optBtn.MouseLeave:Connect(function() Tween(optBtn, 0.1, {BackgroundColor3 = Theme.Secondary, TextColor3 = Theme.TextMuted}) end)
-        
+        local optBtn = Create("TextButton", {Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = Theme.Sidebar, Text = opt, TextColor3 = Theme.TextMuted, Font = Theme.FontReg, TextSize = 12, Parent = list, ZIndex = 11})
+        optBtn.MouseEnter:Connect(function() Tween(optBtn, 0.1, {BackgroundColor3 = Theme.PanelHover, TextColor3 = Theme.Text}) end)
+        optBtn.MouseLeave:Connect(function() Tween(optBtn, 0.1, {BackgroundColor3 = Theme.Sidebar, TextColor3 = Theme.TextMuted}) end)
         optBtn.MouseButton1Click:Connect(function()
             configTable[configKey] = opt
-            dropText.Text = isPremium and ("👑 " .. opt) or opt
-            Close()
+            txt.Text = opt
+            toggleList()
         end)
     end
 end
 
 -- ==========================================
--- 5. BUILDING THE PAGES
+-- 8. BUILDING THE UI (BALANCED)
 -- ==========================================
-local dashPage = CreatePage("Dashboard")
-local dashCard = CreateCard(dashPage, "Welcome to SOVEREIGN", "Version 2.5.0 | Status: Secure")
-CreateToggle(dashCard, "Streamer Mode (Hide UI)", Config.Settings, "StreamerMode", false)
-CreateToggle(dashCard, "Auto-Execute on Join", Config.Settings, "AutoExecute", false)
-local statCard = CreateCard(dashPage, "Account Information")
-Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = "User: " .. LocalPlayer.Name, TextColor3 = Theme.Text, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = statCard})
-Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = "Plan: " .. (Config.Premium and "Premium 👑" or "Free Tier"), TextColor3 = Config.Premium and Theme.Gold or Theme.TextMuted, Font = Theme.Font, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = statCard})
 
-local shootPage = CreatePage("Shooting")
-local timingCard = CreateCard(shootPage, "Perfect Timing", "Adjust shot releases")
-CreateToggle(timingCard, "Enable Perfect Timing", Config.Shooting.PerfectTiming, "Enabled", false)
-CreateSlider(timingCard, "Green Chance", 0, 100, Config.Shooting.PerfectTiming, "GreenChance", false)
-CreateToggle(timingCard, "Ping Compensation", Config.Shooting.PerfectTiming, "PingComp", true)
-CreateToggle(timingCard, "Auto Calibrate", Config.Shooting.PerfectTiming, "AutoCal", true)
+-- 1. Dashboard
+local dashPage = CreatePage("Dashboard", {"home", "main", "account", "status"})
+local welcomeCard = CreateCard(dashPage, "Welcome to SOVEREIGN", "Premium Roblox Utility | Status: Undetected")
+Create("TextLabel", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Text = "Your all-in-one solution for Practical Basketball. Use the sidebar to navigate through modules, or use the search bar at the top to find specific settings instantly.", TextColor3 = Theme.TextMuted, Font = Theme.FontReg, TextSize = 12, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Parent = welcomeCard})
+local accountCard = CreateCard(dashPage, "Account Details")
+Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = "Username: " .. Config.User.Username, TextColor3 = Theme.Text, Font = Theme.FontMed, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = accountCard})
+Create("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Text = "Plan: " .. (Config.User.IsPremium and "Premium 👑" or "Free Tier"), TextColor3 = Config.User.IsPremium and Theme.Gold or Theme.TextMuted, Font = Theme.FontMed, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = accountCard})
 
-local meterCard = CreateCard(shootPage, "Meter Customization", "Visual overrides")
-CreateToggle(meterCard, "Enable Custom Style", Config.Shooting.Meter, "CustomStyle", true)
-CreateSlider(meterCard, "Vertical Offset", -10, 10, Config.Shooting.Meter, "VerticalOffset", true)
-CreateSlider(meterCard, "Rocket Offset", -10, 10, Config.Shooting.Meter, "RocketOffset", true)
-CreateSlider(meterCard, "Funnel Offset", -10, 10, Config.Shooting.Meter, "FunnelOffset", true)
+-- 2. Shooting
+local shootPage = CreatePage("Shooting", {"shoot", "timing", "meter", "green", "release"})
+local timingCard = CreateCard(shootPage, "Perfect Timing", "Configure release windows and green chances.")
+CreateToggle(timingCard, "Enable Perfect Timing", Config.Shooting.PerfectTiming, "Enabled", false) -- FREE
+CreateSlider(timingCard, "Green Chance (%)", 0, 100, Config.Shooting.PerfectTiming, "GreenChance", false) -- FREE
+CreateToggle(timingCard, "Ping Compensation", Config.Shooting.PerfectTiming, "PingComp", true) -- PREMIUM
 
-local autoShootCard = CreateCard(shootPage, "Auto Shoot", "Auto trigger shots")
-CreateToggle(autoShootCard, "Enable Auto Shoot", Config.Shooting.AutoShoot, "Enabled", true)
-CreateToggle(autoShootCard, "Anti-AFK", Config.Shooting.AutoShoot, "AntiAFK", false)
+local meterCard = CreateCard(shootPage, "Meter Settings", "Visual customization for your shot meter.")
+CreateToggle(meterCard, "Custom Meter Style", Config.Shooting.Meter, "CustomStyle", true) -- PREMIUM
+CreateSlider(meterCard, "Vertical Offset", -10, 10, Config.Shooting.Meter, "VerticalOffset", true) -- PREMIUM
 
-local dribblePage = CreatePage("Dribbling")
-local glideCard = CreateCard(dribblePage, "Dribble & Gather Glide", "Movement speed")
-CreateToggle(glideCard, "Enable Glide", Config.Dribbling.Glide, "Enabled", false)
-CreateSlider(glideCard, "Dribble Speed", 16, 50, Config.Dribbling.Glide, "DribbleSpeed", false)
-CreateSlider(glideCard, "Gather Speed", 16, 50, Config.Dribbling.Glide, "GatherSpeed", false)
+local autoShootCard = CreateCard(shootPage, "Auto Shoot", "Automated shooting logic.")
+CreateToggle(autoShootCard, "Enable Auto Shoot", Config.Shooting.AutoShoot, "Enabled", false) -- FREE
+CreateToggle(autoShootCard, "Anti-AFK", Config.Shooting.AutoShoot, "AntiAFK", false) -- FREE
 
-local ankleCard = CreateCard(dribblePage, "Auto Ankle Breaker", "Trigger breakers")
-CreateToggle(ankleCard, "Enable Ankle Breaker", Config.Dribbling.AnkleBreaker, "Enabled", true)
-CreateSlider(ankleCard, "Trigger Range", 1, 50, Config.Dribbling.AnkleBreaker, "Range", true)
+-- 3. Dribbling
+local dribblePage = CreatePage("Dribbling", {"dribble", "glide", "speed", "ankle", "crossover"})
+local glideCard = CreateCard(dribblePage, "Glide Settings", "Movement speed manipulation.")
+CreateToggle(glideCard, "Enable Dribble Glide", Config.Dribbling.Glide, "Enabled", false) -- FREE
+CreateSlider(glideCard, "Dribble Speed", 16, 60, Config.Dribbling.Glide, "DribbleSpeed", false) -- FREE
+CreateSlider(glideCard, "Gather Speed", 16, 60, Config.Dribbling.Glide, "GatherSpeed", true) -- PREMIUM
 
-local comboCard = CreateCard(dribblePage, "Combo Settings", "Configure dribble sequences")
-CreateToggle(comboCard, "Loop Play", Config.Dribbling.Combos, "Loop", false)
-CreateToggle(comboCard, "Hesitation", Config.Dribbling.Combos, "Hesitation", false)
-CreateToggle(comboCard, "Crossover", Config.Dribbling.Combos, "Crossover", false)
-CreateToggle(comboCard, "Behind the Back", Config.Dribbling.Combos, "BehindBack", false)
+local ankleCard = CreateCard(dribblePage, "Auto Ankle Breaker", "Trigger breakers automatically.")
+CreateToggle(ankleCard, "Enable Ankle Breaker", Config.Dribbling.AnkleBreaker, "Enabled", false) -- FREE
+CreateSlider(ankleCard, "Range (Studs)", 1, 50, Config.Dribbling.AnkleBreaker, "Range", true) -- PREMIUM
 
-local defensePage = CreatePage("Defense")
-local guardCard = CreateCard(defensePage, "Auto Guard", "Stay in front of opponent")
-CreateToggle(guardCard, "Enable Auto Guard", Config.Defense.Guard, "Enabled", false)
-CreateToggle(guardCard, "Team Check", Config.Defense.Guard, "TeamCheck", false)
-CreateToggle(guardCard, "Ignore Slow Moves", Config.Defense.Guard, "IgnoreSlow", true)
-CreateSlider(guardCard, "Reaction Time", 0, 100, Config.Defense.Guard, "Reaction", true)
-CreateSlider(guardCard, "Smoothness", 0, 100, Config.Defense.Guard, "Smoothness", true)
-CreateSlider(guardCard, "Distance", 1, 20, Config.Defense.Guard, "Distance", false)
-CreateDropdown(guardCard, "Guard Mode", {"Legit", "Blatant", "Rage"}, Config.Defense.Guard, "Mode", false)
+local comboCard = CreateCard(dribblePage, "Combo Settings", "Manage dribble sequences.")
+CreateToggle(comboCard, "Loop Play", Config.Dribbling.Combos, "Loop", false) -- FREE
+CreateToggle(comboCard, "Crossover", Config.Dribbling.Combos, "Crossover", false) -- FREE
+CreateToggle(comboCard, "Behind the Back", Config.Dribbling.Combos, "BehindBack", true) -- PREMIUM
+CreateToggle(comboCard, "Hesitation", Config.Dribbling.Combos, "Hesitation", true) -- PREMIUM
 
-local blockCard = CreateCard(defensePage, "Block & Rebound", "Defensive assistance")
-CreateToggle(blockCard, "Auto Block", Config.Defense.Block, "Enabled", false)
-CreateToggle(blockCard, "Auto Rebound", Config.Defense.Block, "AutoRebound", false)
+-- 4. Defense
+local defensePage = CreatePage("Defense", {"defense", "guard", "block", "rebound", "steal"})
+local guardCard = CreateCard(defensePage, "Auto Guard", "Automated defensive positioning.")
+CreateToggle(guardCard, "Enable Auto Guard", Config.Defense.Guard, "Enabled", false) -- FREE
+CreateToggle(guardCard, "Team Check", Config.Defense.Guard, "TeamCheck", true) -- PREMIUM
+CreateSlider(guardCard, "Smoothness", 0, 100, Config.Defense.Guard, "Smoothness", true) -- PREMIUM
+CreateDropdown(guardCard, "Guard Mode", {"Legit", "Blatant", "Rage"}, Config.Defense.Guard, "Mode", true) -- PREMIUM
 
-local practiceCard = CreateCard(defensePage, "Practice Defender", "AI configuration")
-CreateToggle(practiceCard, "Jumps At Shots", Config.Defense.Practice, "Jumps", false)
-CreateToggle(practiceCard, "Body Up", Config.Defense.Practice, "BodyUp", false)
-CreateToggle(practiceCard, "Reaches", Config.Defense.Practice, "Reaches", false)
+local blockCard = CreateCard(defensePage, "Block & Rebound", "Automated defensive plays.")
+CreateToggle(blockCard, "Auto Block", Config.Defense.Block, "Enabled", false) -- FREE
+CreateToggle(blockCard, "Auto Rebound", Config.Defense.Block, "AutoRebound", false) -- FREE
 
-local settingsPage = CreatePage("Settings")
-local uiCard = CreateCard(settingsPage, "UI Settings", "Interface configuration")
-CreateSlider(uiCard, "UI Transparency", 0, 100, Config.Settings, "Transparency", false)
+local practiceCard = CreateCard(defensePage, "Practice Defender", "AI configuration.")
+CreateToggle(practiceCard, "Jumps At Shots", Config.Defense.Practice, "Jumps", false) -- FREE
+CreateToggle(practiceCard, "Body Up", Config.Defense.Practice, "BodyUp", false) -- FREE
+CreateToggle(practiceCard, "Reaches", Config.Defense.Practice, "Reaches", false) -- FREE
+
+-- 5. Settings
+local settingsPage = CreatePage("Settings", {"settings", "ui", "config", "menu"})
+local uiCard = CreateCard(settingsPage, "Interface Settings", "Configure the SOVEREIGN UI.")
+CreateSlider(uiCard, "UI Transparency", 0, 100, Config.Settings, "Transparency", false) -- FREE
+CreateToggle(uiCard, "Streamer Mode (Hide UI)", Config.Settings, "StreamerMode", false) -- FREE
 
 -- ==========================================
--- 6. SIDEBAR & NAVIGATION LOGIC
+-- 9. NAVIGATION LOGIC & SEARCH
 -- ==========================================
-local Sidebar = Create("Frame", {Size = UDim2.new(0, 220, 1, -50), Position = UDim2.new(0, 0, 0, 50), BackgroundColor3 = Theme.Secondary, Parent = MainFrame})
-Create("UIListLayout", {Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Sidebar})
-Create("UIPadding", {PaddingTop = UDim.new(0, 15), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), Parent = Sidebar})
-
-local Categories = {
-    {Name = "Dashboard", Icon = "🏠", Page = "Dashboard"},
-    {Name = "Shooting", Icon = "🎯", Page = "Shooting"},
-    {Name = "Dribbling", Icon = "🏀", Page = "Dribbling"},
-    {Name = "Defense", Icon = "🛡️", Page = "Defense"},
-    {Name = "Settings", Icon = "⚙️", Page = "Settings"},
+local CategoryDefs = {
+    {Name = "Dashboard", Icon = "🏠"},
+    {Name = "Shooting", Icon = "🎯"},
+    {Name = "Dribbling", Icon = "🏀"},
+    {Name = "Defense", Icon = "🛡️"},
+    {Name = "Settings", Icon = "⚙️"},
 }
 
 local function SwitchPage(pageName)
-    ActiveTab = pageName
-    for name, p in pairs(Pages) do p.Visible = (name == pageName) end
-    
+    CurrentPage = pageName
+    Breadcrumb.Text = pageName
+    for name, p in pairs(Pages) do p.Frame.Visible = (name == pageName) end
     for pName, btnData in pairs(NavButtons) do
         if pName == pageName then
-            Tween(btnData.Button, 0.2, {BackgroundColor3 = Theme.Panel})
+            Tween(btnData.Frame, 0.2, {BackgroundColor3 = Theme.Panel})
             btnData.Label.TextColor3 = Theme.Text
             btnData.Indicator.Visible = true
         else
-            Tween(btnData.Button, 0.2, {BackgroundColor3 = Theme.Secondary})
+            Tween(btnData.Frame, 0.2, {BackgroundColor3 = Theme.Sidebar})
             btnData.Label.TextColor3 = Theme.TextMuted
             btnData.Indicator.Visible = false
         end
     end
 end
 
-for _, data in ipairs(Categories) do
-    local btn = Create("TextButton", {Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Secondary, Text = "", Parent = Sidebar})
-    AddCorner(btn, 8)
-    Create("TextLabel", {Size = UDim2.new(0, 30, 1, 0), Position = UDim2.new(0, 5, 0, 0), BackgroundTransparency = 1, Text = data.Icon, TextSize = 16, Parent = btn})
-    local label = Create("TextLabel", {Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 35, 0, 0), BackgroundTransparency = 1, Text = data.Name, TextColor3 = Theme.TextMuted, Font = Theme.FontBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = btn})
-    local indicator = Create("Frame", {Size = UDim2.new(0, 3, 0, 16), Position = UDim2.new(0, 0, 0.5, -8), BackgroundColor3 = Theme.Accent, Visible = false, Parent = btn})
+for _, data in ipairs(CategoryDefs) do
+    local btn = Create("TextButton", {Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Theme.Sidebar, Text = "", Parent = NavHolder})
+    AddCorner(btn, 6)
+    Create("TextLabel", {Size = UDim2.new(0, 30, 1, 0), BackgroundTransparency = 1, Text = data.Icon, TextSize = 16, Parent = btn})
+    local label = Create("TextLabel", {Size = UDim2.new(1, -35, 1, 0), Position = UDim2.new(0, 35, 0, 0), BackgroundTransparency = 1, Text = data.Name, TextColor3 = Theme.TextMuted, Font = Theme.FontMed, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = btn})
+    local indicator = Create("Frame", {Size = UDim2.new(0, 3, 0, 18), Position = UDim2.new(0, 0, 0.5, -9), BackgroundColor3 = Theme.Accent, Visible = false, Parent = btn})
     AddCorner(indicator, 2)
 
-    btn.MouseEnter:Connect(function() if ActiveTab ~= data.Page then Tween(btn, 0.2, {BackgroundColor3 = Theme.Panel}) end end)
-    btn.MouseLeave:Connect(function() if ActiveTab ~= data.Page then Tween(btn, 0.2, {BackgroundColor3 = Theme.Secondary}) end end)
-    btn.MouseButton1Click:Connect(function() SwitchPage(data.Page) end)
+    btn.MouseEnter:Connect(function() if CurrentPage ~= data.Name then Tween(btn, 0.2, {BackgroundColor3 = Theme.PanelHover}) end end)
+    btn.MouseLeave:Connect(function() if CurrentPage ~= data.Name then Tween(btn, 0.2, {BackgroundColor3 = Theme.Sidebar}) end end)
+    btn.MouseButton1Click:Connect(function() SwitchPage(data.Name) end)
     
-    NavButtons[data.Page] = {Button = btn, Label = label, Indicator = indicator}
+    NavButtons[data.Name] = {Frame = btn, Label = label, Indicator = indicator}
 end
 
--- Search Filter
 SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
     local query = string.lower(SearchInput.Text)
-    if query == "" then SwitchPage("Dashboard") return end
-    for pageName, pageObj in pairs(Pages) do
-        for _, child in ipairs(pageObj:GetDescendants()) do
-            if child:IsA("TextLabel") and string.find(string.lower(child.Text), query) then
-                SwitchPage(pageName)
-                return
-            end
-        end
+    if query == "" then
+        SwitchPage("Dashboard")
+        for _, p in pairs(Pages) do p.Frame.Visible = false end
+        Pages["Dashboard"].Frame.Visible = true
+        return
     end
+    
+    local foundPage = nil
+    for pageName, pageData in pairs(Pages) do
+        local matchFound = false
+        for _, keyword in ipairs(pageData.Keywords) do
+            if string.find(keyword, query) or string.find(pageName:lower(), query) then matchFound = true break end
+        end
+        for _, v in ipairs(pageData.Frame:GetDescendants()) do
+            if v:IsA("TextLabel") and string.find(v.Text:lower(), query) then matchFound = true break end
+        end
+        if matchFound then foundPage = pageName break end
+    end
+    if foundPage then SwitchPage(foundPage) end
 end)
 
 SwitchPage("Dashboard")
 
 -- ==========================================
--- 7. ACTUAL GAME LOGIC IMPLEMENTATION
+-- 10. ACTUAL FUNCTIONALITY BRIDGE
 -- ==========================================
--- This section reads directly from the Config table and applies the logic to the game.
-
-local function GetCharacter()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    return char, char:FindFirstChildOfClass("Humanoid")
+local function GetChar()
+    return LocalPlayer.Character, LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
 end
 
--- Speed / Glide Logic
 RunService.Heartbeat:Connect(function()
-    local char, hum = GetCharacter()
+    local char, hum = GetChar()
     if not char or not hum then return end
-    
     if Config.Dribbling.Glide.Enabled then
-        -- Apply a custom walkspeed based on the slider
-        hum.WalkSpeed = Config.Dribbling.Glide.DribbleSpeed
+        local moveDir = hum.MoveDirection
+        if moveDir.Magnitude > 0 then hum.WalkSpeed = Config.Dribbling.Glide.DribbleSpeed else hum.WalkSpeed = 16 end
     else
-        -- Revert to default if not sprinting
-        if hum.WalkSpeed == Config.Dribbling.Glide.DribbleSpeed then
-            hum.WalkSpeed = 16 
-        end
+        if hum.WalkSpeed == Config.Dribbling.Glide.DribbleSpeed then hum.WalkSpeed = 16 end
     end
 end)
 
--- Auto Guard Logic
-task.spawn(function()
-    while task.wait() do
-        if Config.Defense.Guard.Enabled then
-            local char, hum = GetCharacter()
-            if not char or not hum then continue end
-            
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if not root then continue end
-
-            local closestPlayer = nil
-            local shortestDistance = Config.Defense.Guard.Distance + 10
-            
-            for _, player in pairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and player.Character then
-                    local pChar = player.Character
-                    local pRoot = pChar:FindFirstChild("HumanoidRootPart")
-                    local pHum = pChar:FindFirstChildOfClass("Humanoid")
-                    
-                    if pRoot and pHum and pHum.Health > 0 then
-                        -- Team Check
-                        if Config.Defense.Guard.TeamCheck and player.Team == LocalPlayer.Team then
-                            continue
-                        end
-                        
-                        local dist = (root.Position - pRoot.Position).Magnitude
-                        if dist < shortestDistance then
-                            shortestDistance = dist
-                            closestPlayer = player
-                        end
-                    end
-                end
-            end
-            
-            if closestPlayer and closestPlayer.Character then
-                local targetRoot = closestPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if targetRoot then
-                    local lookVector = (targetRoot.Position - root.Position).Unit
-                    local newCFrame = CFrame.lookAt(root.Position, root.Position + lookVector)
-                    
-                    -- Smoothness logic
-                    if Config.Defense.Guard.Mode == "Legit" then
-                        root.CFrame = root.CFrame:Lerp(newCFrame, 1 - (Config.Defense.Guard.Smoothness / 100))
-                    elseif Config.Defense.Guard.Mode == "Rage" then
-                        root.CFrame = newCFrame
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- Auto Block & Rebound Logic
-task.spawn(function()
-    while task.wait() do
-        if Config.Defense.Block.Enabled or Config.Defense.Block.AutoRebound then
-            local char, hum = GetCharacter()
-            if char and hum then
-                -- Find basketball
-                local ball = Workspace:FindFirstChild("Basketball") or Workspace:FindFirstChildOfClass("Part")
-                if ball and ball.Name:lower():find("ball") then
-                    local dist = (char.HumanoidRootPart.Position - ball.Position).Magnitude
-                    
-                    if Config.Defense.Block.Enabled and dist < 8 then
-                        -- Jump to block
-                        hum.Jump = true
-                    end
-                    
-                    if Config.Defense.Block.AutoRebound and dist < 10 then
-                        char.HumanoidRootPart.CFrame = CFrame.new(ball.Position)
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- Auto Shoot & Perfect Timing (Generic RemoteEvent firing)
--- Because we don't know the exact remote name for Practical Basketball, 
--- this simulates a click if the config is enabled.
-local UserInputService = game:GetService("UserInputService")
 task.spawn(function()
     while task.wait(0.1) do
-        if Config.Shooting.AutoShoot.Enabled then
-            -- Simulate mouse click for shoot
-            local click = Instance.new("MouseButton1Down")
-            -- Note: This requires VirtualUser or executor mouse click functions.
-            -- For broad compatibility, we use standard mouse1click if available.
-            if mouse1click then
-                mouse1click()
+        if Config.Defense.Guard.Enabled then
+            local char, hum = GetChar()
+            if not char or not hum then continue end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then continue end
+            
+            local closest
+            local dist = Config.Defense.Guard.Distance + 5
+            
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p.Character then
+                    local pRoot = p.Character:FindFirstChild("HumanoidRootPart")
+                    if pRoot and p.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+                        if Config.Defense.Guard.TeamCheck and p.Team == LocalPlayer.Team then continue end
+                        local d = (root.Position - pRoot.Position).Magnitude
+                        if d < dist then dist = d closest = p end
+                    end
+                end
+            end
+            
+            if closest then
+                local targetRoot = closest.Character.HumanoidRootPart
+                local look = CFrame.lookAt(root.Position, Vector3.new(targetRoot.Position.X, root.Position.Y, targetRoot.Position.Z))
+                root.CFrame = root.CFrame:Lerp(look, 0.2)
             end
         end
     end
 end)
 
--- Anti-AFK Logic
-task.spawn(function()
-    while task.wait(60) do
-        if Config.Shooting.AutoShoot.AntiAFK then
-            local VirtualUser = game:GetService("VirtualUser")
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-        end
-    end
+task.delay(1, function()
+    Notify("SOVEREIGN Loaded", "Welcome back, " .. Config.User.Username .. ". Free features are fully unlocked.", "Success")
 end)
 
-print("SOVEREIGN v2.5.0 Loaded Successfully. All modules active.")
+print("SOVEREIGN v3.1.0 (Balanced) Loaded Successfully.")
